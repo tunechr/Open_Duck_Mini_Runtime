@@ -16,12 +16,15 @@ class IMUClient:
         self.freq = freq
         self.client_socket = socket.socket()
         self.connected = False
+        
+        print(f"Connecting to IMU server at {host}:{port}...")
         while not self.connected:
             try:
                 self.client_socket.connect((self.host, self.port))
                 self.connected = True
+                print("Connected successfully!")
             except Exception as e:
-                print(e)
+                print(f"Connection failed: {e}")
                 time.sleep(0.5)
         self.imu_queue = Queue(maxsize=1)
         self.last_imu = [0, 0, 0, 0]
@@ -32,11 +35,13 @@ class IMUClient:
         while True:
             try:
                 data = self.client_socket.recv(1024)  # receive response
+                if len(data) == 0:
+                    print("Connection lost")
+                    break
                 data = pickle.loads(data)
-
                 self.imu_queue.put(data)
-            except:
-                print("missed imu")
+            except Exception as e:
+                print(f"IMU data receive error: {e}")
 
             time.sleep(1 / self.freq)
 
@@ -53,9 +58,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--ip", type=str, required=True, help="IP address of the robot")
+    parser.add_argument("--port", type=int, default=1234, help="Port number (default: 1234)")
+    parser.add_argument("--freq", type=int, default=30, help="Update frequency (default: 30)")
     args = parser.parse_args()
 
-    client = IMUClient(args.ip)
+    client = IMUClient(args.ip, port=args.port, freq=args.freq)
 
     fv = Viewer()
     fv.start()
