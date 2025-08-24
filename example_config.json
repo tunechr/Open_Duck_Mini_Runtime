@@ -26,7 +26,11 @@
         "right_knee": 0.0,
         "right_ankle": 0.0
     },
-    "controller_type": "xbox",
+    "controller_type": "virtual",
     "auto_detect_controller": true,
-    "other_existing_config": "..."
+    "virtual_controller_settings": {
+        "look_around_interval": 10.0,
+        "movement_interval": 30.0,
+        "enable_movement": false
+    }
 }
