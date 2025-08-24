@@ -5,7 +5,7 @@ import numpy as np
 from mini_bdx_runtime.rustypot_position_hwi import HWI
 from mini_bdx_runtime.onnx_infer import OnnxInfer
 
-from mini_bdx_runtime.raw_imu import Imu
+from mini_bdx_runtime.raw_imu import Imu, ImuICM20948
 from mini_bdx_runtime.poly_reference_motion import PolyReferenceMotion
 from mini_bdx_runtime.xbox_controller import XBoxController
 from mini_bdx_runtime.feet_contacts import FeetContacts
@@ -72,7 +72,7 @@ class RLWalk:
 
         self.start()
 
-        self.imu = Imu(
+        self.imu = ImuICM20948(
             sampling_freq=int(self.control_freq),
             user_pitch_bias=self.pitch_bias,
             upside_down=self.duck_config.imu_upside_down,
