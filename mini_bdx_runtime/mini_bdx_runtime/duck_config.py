@@ -81,3 +81,7 @@ class DuckConfig:
                 "right_ankle": 0.0,
             },
         )
+
+        # Add controller configuration
+        self.controller_type = self.json_config.get("controller_type", "xbox")  # Default to xbox
+        self.auto_detect_controller = self.json_config.get("auto_detect_controller", True)  # Auto-detect by default

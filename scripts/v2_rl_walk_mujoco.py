@@ -15,6 +15,7 @@ from mini_bdx_runtime.antennas import Antennas
 from mini_bdx_runtime.projector import Projector
 from mini_bdx_runtime.rl_utils import make_action_dict, LowPassActionFilter
 from mini_bdx_runtime.duck_config import DuckConfig
+from mini_bdx_runtime.controller_factory import ControllerFactory
 
 import os
 
@@ -26,7 +27,7 @@ class RLWalk:
         self,
         onnx_model_path: str,
         duck_config_path: str = f"{HOME_DIR}/duck_config.json",
-        serial_port: str = "/dev/ttyACM0",
+        serial_port: str = "/dev/ttyUSB0",
         control_freq: float = 50,
         pid=[30, 0, 0],
         action_scale=0.25,
@@ -35,6 +36,7 @@ class RLWalk:
         save_obs=False,
         replay_obs=None,
         cutoff_frequency=None,
+        controller_type=None,  # New parameter
     ):
 
         self.duck_config = DuckConfig(config_json_path=duck_config_path)
@@ -96,7 +98,36 @@ class RLWalk:
 
         self.command_freq = 20  # hz
         if self.commands:
-            self.xbox_controller = XBoxController(self.command_freq)
+            # Determine controller type
+            if controller_type:
+                # Use explicitly specified controller type
+                final_controller_type = controller_type
+            elif self.duck_config.auto_detect_controller:
+                # Auto-detect controller
+                try:
+                    final_controller_type = ControllerFactory.auto_detect_controller()
+                    print(f"Auto-detected controller: {final_controller_type}")
+                except Exception as e:
+                    print(
+                        f"Auto-detection failed: {e}. Using configured type: {self.duck_config.controller_type}"
+                    )
+                    final_controller_type = self.duck_config.controller_type
+            else:
+                # Use configured controller type
+                final_controller_type = self.duck_config.controller_type
+
+            # Create the appropriate controller
+            try:
+                self.xbox_controller = ControllerFactory.create_controller(
+                    final_controller_type, self.command_freq
+                )
+                print(f"Successfully initialized {final_controller_type} controller")
+            except Exception as e:
+                print(f"Failed to initialize {final_controller_type} controller: {e}")
+                print("Falling back to Xbox controller...")
+                self.xbox_controller = ControllerFactory.create_controller(
+                    "xbox", self.command_freq
+                )
 
         # Reference motion, but we only really need the length of one phase
         # TODO
@@ -379,8 +410,22 @@ if __name__ == "__main__":
         help="replay the observations from a previous run (can be from the robot or from mujoco)",
     )
     parser.add_argument("--cutoff_frequency", type=float, default=None)
+    # Add controller type argument
+    parser.add_argument(
+        "--controller-type",
+        type=str,
+        choices=["xbox", "ps5", "playstation5", "dualsense", "auto"],
+        default=None,
+        help="Controller type to use. 'auto' for auto-detection, or specify 'xbox'/'ps5'",
+    )
 
     args = parser.parse_args()
+
+    # Handle auto-detection argument
+    controller_type = args.controller_type
+    if controller_type == "auto":
+        controller_type = None  # Let the auto-detection handle it
+
     pid = [args.p, args.i, args.d]
 
     print("Done parsing args")
@@ -395,6 +440,7 @@ if __name__ == "__main__":
         save_obs=args.save_obs,
         replay_obs=args.replay_obs,
         cutoff_frequency=args.cutoff_frequency,
+        controller_type=controller_type,  # Pass the controller type
     )
     print("Done instantiating RLWalk")
     rl_walk.run()

@@ -25,5 +25,8 @@
         "right_hip_pitch": 0.0,
         "right_knee": 0.0,
         "right_ankle": 0.0
-    }
+    },
+    "controller_type": "xbox",
+    "auto_detect_controller": true,
+    "other_existing_config": "..."
 }
