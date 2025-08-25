@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Robot Camera Stream</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .video-container {
+            text-align: center;
+            margin: 20px 0;
+        }
+        #video-stream {
+            max-width: 100%;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+        }
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .status {
+            text-align: center;
+            color: #666;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 Robot Camera Stream</h1>
+        
+        <div class="video-container">
+            <img id="video-stream" src="{{ url_for('video_feed') }}" alt="Camera Stream">
+        </div>
+        
+        <div class="controls">
+            <button onclick="refreshStream()">🔄 Refresh Stream</button>
+            <button onclick="takeSnapshot()">📸 Take Snapshot</button>
+            <button onclick="toggleFullscreen()">🖥️ Fullscreen</button>
+        </div>
+        
+        <div class="status">
+            <p id="status">Stream Status: <span style="color: green;">Active</span></p>
+            <p>Access this page from any device on your network</p>
+        </div>
+    </div>
+
+    <script>
+        function refreshStream() {
+            const img = document.getElementById('video-stream');
+            const src = img.src;
+            img.src = '';
+            img.src = src + '?t=' + new Date().getTime();
+        }
+        
+        function takeSnapshot() {
+            window.open('/snapshot', '_blank');
+        }
+        
+        function toggleFullscreen() {
+            const img = document.getElementById('video-stream');
+            if (img.requestFullscreen) {
+                img.requestFullscreen();
+            } else if (img.webkitRequestFullscreen) {
+                img.webkitRequestFullscreen();
+            } else if (img.mozRequestFullScreen) {
+                img.mozRequestFullScreen();
+            }
+        }
+        
+        // Monitor stream status
+        const img = document.getElementById('video-stream');
+        img.onerror = function() {
+            document.getElementById('status').innerHTML = 'Stream Status: <span style="color: red;">Error</span>';
+        };
+        img.onload = function() {
+            document.getElementById('status').innerHTML = 'Stream Status: <span style="color: green;">Active</span>';
+        };
+    </script>
+</body>
+</html>
