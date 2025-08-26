@@ -1,5 +1,5 @@
 import time
-from mini_bdx_runtime.mini_bdx_runtime.feet_contacts import FeetContacts
+from mini_bdx_runtime.feet_contacts import FeetContacts
 
 def main():
     feet = FeetContacts()
