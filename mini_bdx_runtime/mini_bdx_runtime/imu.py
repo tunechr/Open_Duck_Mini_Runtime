@@ -41,10 +41,13 @@ class ImuICM20948:
             calib_data = pickle.load(open("icm20948_calib_data.pkl", "rb"))
             self.gyro_offsets = calib_data.get("gyro_offsets", [0, 0, 0])
             self.accel_offsets = calib_data.get("accel_offsets", [0, 0, 0])
+            # New: magnetometer bias (hard-iron). Soft-iron omitted for brevity.
+            self.mag_offsets = calib_data.get("mag_offsets", [0, 0, 0])
             print("Loaded ICM20948 calibration data")
         else:
             self.gyro_offsets = [0, 0, 0]
             self.accel_offsets = [0, 0, 0]
+            self.mag_offsets = [0, 0, 0]
             print("icm20948_calib_data.pkl not found")
             print("ICM20948 is running uncalibrated")
 
@@ -52,20 +55,20 @@ class ImuICM20948:
         self.upside_down = upside_down
         
         # Initialize orientation estimate
-        self.orientation_quat = np.array([0, 0, 0, 1])  # [x, y, z, w] - identity quaternion
+        self.orientation_quat = np.array([0, 0, 0, 1])  # [x, y, z, w]
         self.last_time = time.time()
+
+        # Track yaw separately for blending
+        self._yaw_gyro = 0.0
 
         self.last_imu_data = [0, 0, 0, 1]  # quaternion [x, y, z, w]
         self.imu_queue = Queue(maxsize=1)
         Thread(target=self.imu_worker, daemon=True).start()
 
     def _calibrate_icm20948(self):
-        """Simple calibration for ICM20948 - calculates offsets while stationary"""
-        print("Keep the IMU stationary for calibration...")
-        gyro_samples = []
-        accel_samples = []
-        
-        # Collect samples for 5 seconds
+        """Collect gyro, accel offsets (stationary) and mag hard-iron bias (slowly rotate)."""
+        print("Keep the IMU stationary for 5s for gyro/accel calibration...")
+        gyro_samples, accel_samples = [], []
         start_time = time.time()
         while time.time() - start_time < 5:
             try:
@@ -74,80 +77,139 @@ class ImuICM20948:
                 time.sleep(0.01)
             except Exception as e:
                 print(f"Calibration error: {e}")
-                continue
-        
-        # Calculate offsets
-        gyro_samples = np.array(gyro_samples)
-        accel_samples = np.array(accel_samples)
-        
+
+        gyro_samples = np.array(gyro_samples) if len(gyro_samples) else np.zeros((1, 3))
+        accel_samples = np.array(accel_samples) if len(accel_samples) else np.zeros((1, 3))
+
         self.gyro_offsets = np.mean(gyro_samples, axis=0).tolist()
-        # For accelerometer, we expect Z to be ~9.8 (gravity), X and Y to be ~0
         accel_means = np.mean(accel_samples, axis=0)
-        self.accel_offsets = [accel_means[0], accel_means[1], accel_means[2] - 9.8]
-        
-        # Save calibration data
+        self.accel_offsets = [float(accel_means[0]), float(accel_means[1]), float(accel_means[2] - 9.80665)]
+
+        print("Now rotate the IMU slowly through all orientations for 20s for magnetometer bias...")
+        mag_samples = []
+        start_time = time.time()
+        while time.time() - start_time < 20:
+            try:
+                m = self.imu.magnetic  # microtesla
+                if m is not None:
+                    mag_samples.append(list(m))
+                time.sleep(0.02)
+            except Exception as e:
+                print(f"Mag calibration error: {e}")
+
+        if len(mag_samples) >= 50:
+            mags = np.array(mag_samples)
+            # Simple hard-iron bias: (max + min)/2 per axis
+            mag_min = mags.min(axis=0)
+            mag_max = mags.max(axis=0)
+            self.mag_offsets = ((mag_max + mag_min) / 2.0).tolist()
+        else:
+            self.mag_offsets = [0.0, 0.0, 0.0]
+            print("Not enough magnetometer samples; skipping mag bias. You may recalibrate later.")
+
         calib_data = {
             "gyro_offsets": self.gyro_offsets,
-            "accel_offsets": self.accel_offsets
+            "accel_offsets": self.accel_offsets,
+            "mag_offsets": self.mag_offsets,
         }
         pickle.dump(calib_data, open("icm20948_calib_data.pkl", "wb"))
         print("ICM20948 calibration completed and saved")
         print(f"Gyro offsets: {self.gyro_offsets}")
         print(f"Accel offsets: {self.accel_offsets}")
-        
+        print(f"Mag offsets:   {self.mag_offsets}")
+
         if self.calibrate:
             exit()
 
-    def _apply_axis_remap(self, gyro, accel):
-        """Apply axis remapping similar to BNO055"""
+    def _apply_axis_remap(self, gyro, accel, mag=None):
+        """Apply axis remapping similar to BNO055 remap above."""
         if self.upside_down:
-            # Remap axes: Y->X, X->Y, Z->Z, and negate all
             gyro_remapped = [-gyro[1], -gyro[0], -gyro[2]]
             accel_remapped = [-accel[1], -accel[0], -accel[2]]
+            mag_remapped = None if mag is None else [-mag[1], -mag[0], -mag[2]]
         else:
-            # Remap axes: Y->X, X->Y, Z->Z, negate X, keep Y and Z positive
             gyro_remapped = [-gyro[1], gyro[0], gyro[2]]
             accel_remapped = [-accel[1], accel[0], accel[2]]
-        
-        return gyro_remapped, accel_remapped
+            mag_remapped = None if mag is None else [-mag[1], mag[0], mag[2]]
+        return gyro_remapped, accel_remapped, mag_remapped
 
-    def _complementary_filter(self, gyro, accel, dt, alpha=0.98):
-        """Simple complementary filter for orientation estimation"""
-        # Normalize accelerometer data
-        accel_norm = np.linalg.norm(accel)
-        if accel_norm > 0:
-            accel = accel / accel_norm
+    def _tilt_compensated_yaw(self, accel, mag):
+        """Compute tilt-compensated yaw (heading) from accel (for roll/pitch) and mag."""
+        # Normalize
+        a = np.array(accel, dtype=float)
+        m = np.array(mag, dtype=float)
+        an = np.linalg.norm(a); mn = np.linalg.norm(m)
+        if an < 1e-6 or mn < 1e-6:
+            return None
+        a /= an; m /= mn
+        # Roll, pitch from accel
+        roll = np.arctan2(a[1], a[2])
+        pitch = np.arctan2(-a[0], np.sqrt(a[1] ** 2 + a[2] ** 2))
+        # Tilt-compensation (NED-like)
+        mx, my, mz = m
+        sinr, cosr = np.sin(roll), np.cos(roll)
+        sinp, cosp = np.sin(pitch), np.cos(pitch)
+        # Rotate mag into horizontal plane
+        hx = mx * cosp + mz * sinp
+        hy = mx * sinr * sinp + my * cosr - mz * sinr * cosp
+        yaw = np.arctan2(-hy, hx)  # sign chosen to match BNO heading sense; adjust if needed
+        return float(yaw)
+
+    def _wrap_angle(self, a):
+        return (a + np.pi) % (2 * np.pi) - np.pi
+
+    def _normalize_quat(self, q):
+        q = np.array(q, dtype=float)
+        n = np.linalg.norm(q)
+        if n > 0:
+            q /= n
+        # Stabilize sign so w >= 0 for consistency with BNO usage
+        if q[3] < 0:
+            q = -q
+        return q
+
+    def _complementary_filter(self, gyro, accel, mag, dt, alpha=0.98, beta=0.98):
+        """
+        alpha: accel vs gyro for roll/pitch
+        beta:  gyro vs magnetometer for yaw (1.0 => rely on gyro, 0.0 => rely on mag)
+        """
+        # Normalize accel
+        accel = np.array(accel, dtype=float)
+        an = np.linalg.norm(accel)
+        if an > 0:
+            accel /= an
         else:
-            return self.orientation_quat  # Return previous orientation if invalid accel data
-        
-        # Calculate accelerometer-based roll and pitch
+            return self.orientation_quat
+
+        # Accel-based roll & pitch
         roll_accel = np.arctan2(accel[1], accel[2])
-        pitch_accel = np.arctan2(-accel[0], np.sqrt(accel[1]**2 + accel[2]**2))
-        
-        # Get current orientation as euler angles
+        pitch_accel = np.arctan2(-accel[0], np.sqrt(accel[1] ** 2 + accel[2] ** 2))
+
+        # Current euler from last orientation
         current_euler = R.from_quat(self.orientation_quat).as_euler('xyz')
-        
-        # Integrate gyroscope data
+        # Gyro integrate
         roll_gyro = current_euler[0] + gyro[0] * dt
         pitch_gyro = current_euler[1] + gyro[1] * dt
         yaw_gyro = current_euler[2] + gyro[2] * dt
-        
-        # Apply complementary filter
+
+        # Blend roll/pitch
         roll = alpha * roll_gyro + (1 - alpha) * roll_accel
         pitch = alpha * pitch_gyro + (1 - alpha) * pitch_accel
-        yaw = yaw_gyro  # No magnetometer correction for yaw in this simple implementation
-        
-        # Apply pitch bias
-        pitch -= np.deg2rad(self.pitch_bias)
-        
-        # Convert back to quaternion
-        orientation_quat = R.from_euler('xyz', [roll, pitch, yaw]).as_quat()
-        
-        return orientation_quat
 
-    def convert_axes(self, euler):
-        euler = [np.pi + euler[1], euler[0], euler[2]]
-        return euler
+        # Magnetometer yaw if available
+        yaw = yaw_gyro
+        if mag is not None:
+            yaw_mag = self._tilt_compensated_yaw(accel, mag)
+            if yaw_mag is not None:
+                # Blend with wrapping
+                dy = self._wrap_angle(yaw_gyro - yaw_mag)
+                yaw = self._wrap_angle(yaw_mag + beta * dy)
+
+        # Pitch bias to match BNO convention
+        pitch -= np.deg2rad(self.pitch_bias)
+
+        q = R.from_euler('xyz', [roll, pitch, yaw]).as_quat()
+        return self._normalize_quat(q)
 
     def imu_worker(self):
         while True:
@@ -155,27 +217,30 @@ class ImuICM20948:
             current_time = time.time()
             dt = current_time - self.last_time
             self.last_time = current_time
-            
             try:
-                gyro_raw = self.imu.gyro
-                accel_raw = self.imu.acceleration
-                
+                gyro_raw = self.imu.gyro            # rad/s (Adafruit)
+                accel_raw = self.imu.acceleration   # m/s^2
+                mag_raw = self.imu.magnetic         # microtesla
                 if gyro_raw is None or accel_raw is None:
+                    time.sleep(1 / self.sampling_freq)
                     continue
-                    
-                # Apply calibration offsets
-                gyro = [g - offset for g, offset in zip(gyro_raw, self.gyro_offsets)]
-                accel = [a - offset for a, offset in zip(accel_raw, self.accel_offsets)]
-                
-                # Apply axis remapping
-                gyro, accel = self._apply_axis_remap(gyro, accel)
-                
-                # Update orientation using complementary filter
-                self.orientation_quat = self._complementary_filter(gyro, accel, dt)
+
+                # Offsets
+                gyro = [g - off for g, off in zip(gyro_raw, self.gyro_offsets)]
+                accel = [a - off for a, off in zip(accel_raw, self.accel_offsets)]
+                mag = None
+                if mag_raw is not None:
+                    mag = [m - off for m, off in zip(mag_raw, self.mag_offsets)]
+
+                # Axis remap to match BNO
+                gyro, accel, mag = self._apply_axis_remap(gyro, accel, mag)
+
+                # Update orientation
+                self.orientation_quat = self._complementary_filter(gyro, accel, mag, dt)
 
             except Exception as e:
                 print("[ICM20948 IMU]:", e)
-                continue
+                # continue
 
             self.imu_queue.put(self.orientation_quat.copy())
             took = time.time() - s
