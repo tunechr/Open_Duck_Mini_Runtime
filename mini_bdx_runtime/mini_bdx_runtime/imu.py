@@ -400,14 +400,131 @@ class Imu:
             return None
 
 
+class ImuBNO08x:
+    """
+    BNO08x/BNO085 IMU using CircuitPython driver. Outputs quaternion [x,y,z,w].
+    Notes:
+    - Sensor fusion is done on-chip. We enable Game Rotation Vector by default (gyro+accel),
+      which is stable and not impacted by magnetic disturbances. If you want magnetometer-based
+      absolute yaw, set use_mag=True.
+    - Calibration is handled internally by the sensor; move through different orientations.
+    """
+    def __init__(
+        self,
+        sampling_freq,
+        user_pitch_bias=0,
+        calibrate=False,
+        upside_down=False,
+        use_mag=False,
+    ):
+        self.sampling_freq = sampling_freq
+        self.user_pitch_bias = user_pitch_bias
+        self.nominal_pitch_bias = 0
+        self.calibrate = calibrate
+        self.upside_down = upside_down
+        self.use_mag = use_mag
+
+        # Lazy import to avoid hard dependency for users not using BNO08x
+        try:
+            from adafruit_bno08x import (
+                BNO08X_I2C,
+                BNO_REPORT_GAME_ROTATION_VECTOR,
+                BNO_REPORT_ROTATION_VECTOR,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                "BNO08x driver not available. Install 'adafruit-circuitpython-bno08x' and 'adafruit-blinka'."
+            ) from e
+
+        i2c = busio.I2C(board.SCL, board.SDA)
+        self.imu = BNO08X_I2C(i2c)
+
+        # Enable desired fusion output
+        if self.use_mag:
+            self.imu.enable_feature(BNO_REPORT_ROTATION_VECTOR)
+        else:
+            self.imu.enable_feature(BNO_REPORT_GAME_ROTATION_VECTOR)
+
+        self.pitch_bias = self.nominal_pitch_bias + self.user_pitch_bias
+
+        if self.calibrate:
+            print("BNO08x calibrates internally; move sensor slowly through orientations.")
+            # No explicit save/load API in this driver; rely on continuous self-calibration
+
+        self.last_imu_data = [0, 0, 0, 1]
+        self.imu_queue = Queue(maxsize=1)
+        Thread(target=self.imu_worker, daemon=True).start()
+
+    def _apply_upside_down(self, q):
+        """Apply a simple upside-down correction by rotating 180° about X.
+        Adjust if your physical mount differs.
+        """
+        if not self.upside_down:
+            return q
+        # 180 deg about X axis
+        q_ud = R.from_euler("x", np.pi).as_quat()  # [x,y,z,w]
+        return (R.from_quat(q) * R.from_quat(q_ud)).as_quat()
+
+    def imu_worker(self):
+        while True:
+            s = time.time()
+            try:
+                # Returns (i, j, k, real) => (x, y, z, w)
+                quat = self.imu.quaternion
+                if quat is None:
+                    time.sleep(1 / self.sampling_freq)
+                    continue
+                x, y, z, w = quat
+                q = np.array([x, y, z, w], dtype=float)
+                # Normalize and enforce scalar w >= 0 for consistency
+                n = np.linalg.norm(q)
+                if n > 0:
+                    q = q / n
+                if q[3] < 0:
+                    q = -q
+
+                # Optional upside-down mapping
+                q = self._apply_upside_down(q)
+
+                # Apply pitch bias by converting to euler, subtract bias, then back
+                e = R.from_quat(q).as_euler("xyz")
+                e[1] -= np.deg2rad(self.pitch_bias)
+                q = R.from_euler("xyz", e).as_quat()
+
+                self.imu_queue.put(q.copy())
+            except Exception as e:
+                print("[BNO08x IMU]:", e)
+
+            took = time.time() - s
+            time.sleep(max(0, 1 / self.sampling_freq - took))
+
+    def get_data(self, euler=False, mat=False):
+        try:
+            self.last_imu_data = self.imu_queue.get(False)
+        except Exception:
+            pass
+
+        try:
+            if not euler and not mat:
+                return self.last_imu_data
+            elif euler:
+                return R.from_quat(self.last_imu_data).as_euler("xyz")
+            elif mat:
+                return R.from_quat(self.last_imu_data).as_matrix()
+        except Exception as e:
+            print("[BNO08x IMU]: ", e)
+            return None
+
 if __name__ == "__main__":    
     parser = argparse.ArgumentParser(description='IMU Orientation Reader')
-    parser.add_argument('--imu-type', choices=['bno055', 'icm20948'], default='bno055',
+    parser.add_argument('--imu-type', choices=['bno055', 'icm20948', 'bno08x', 'bno085'], default='bno055',
                        help='Type of IMU to use (default: bno055)')
     parser.add_argument('--upside-down', action='store_true', default=False,
                        help='Set if IMU is mounted upside down')
     parser.add_argument('--calibrate', action='store_true', default=False,
                        help='Run calibration routine')
+    parser.add_argument('--use-mag', action='store_true', default=False,
+                        help='For BNO08x only: use magnetometer yaw (Rotation Vector) instead of Game Rotation Vector')
     parser.add_argument('--output', choices=['quat', 'euler'], default='quat',
                        help='Output format: quaternion or euler angles')
     
@@ -417,6 +534,8 @@ if __name__ == "__main__":
     
     if args.imu_type == 'icm20948':
         imu = ImuICM20948(50, upside_down=args.upside_down, calibrate=args.calibrate)
+    elif args.imu_type in ('bno08x', 'bno085'):
+        imu = ImuBNO08x(50, upside_down=args.upside_down, calibrate=args.calibrate, use_mag=args.use_mag)
     else:
         imu = Imu(50, upside_down=args.upside_down, calibrate=args.calibrate)
     

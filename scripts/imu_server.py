@@ -6,7 +6,7 @@ import os
 
 # Add the parent directory to the path to import mini_bdx_runtime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from mini_bdx_runtime.mini_bdx_runtime.imu import Imu, ImuICM20948
+from mini_bdx_runtime.mini_bdx_runtime.imu import Imu, ImuICM20948, ImuBNO08x
 from threading import Thread
 import time
 
@@ -14,7 +14,7 @@ import argparse
 
 
 class IMUServer:
-    def __init__(self, imu=None, imu_type='bno055', pitch_bias=0, upside_down=False, calibrate=False):
+    def __init__(self, imu=None, imu_type='bno055', pitch_bias=0, upside_down=False, calibrate=False, use_mag=False):
         self.host = "0.0.0.0"
         self.port = 1234
 
@@ -28,6 +28,8 @@ class IMUServer:
         if imu is None:
             if imu_type == 'icm20948':
                 self.imu = ImuICM20948(50, user_pitch_bias=pitch_bias, upside_down=upside_down, calibrate=calibrate)
+            elif imu_type in ('bno08x', 'bno085'):
+                self.imu = ImuBNO08x(50, user_pitch_bias=pitch_bias, upside_down=upside_down, calibrate=calibrate, use_mag=use_mag)
             else:
                 self.imu = Imu(50, user_pitch_bias=pitch_bias, upside_down=upside_down, calibrate=calibrate)
         else:
@@ -58,12 +60,14 @@ class IMUServer:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--pitch_bias", type=float, default=0, help="deg")
-    parser.add_argument('--imu-type', choices=['bno055', 'icm20948'], default='bno055',
+    parser.add_argument('--imu-type', choices=['bno055', 'icm20948', 'bno08x', 'bno085'], default='bno055',
                        help='Type of IMU to use (default: bno055)')
     parser.add_argument('--upside-down', action='store_true', default=False,
                        help='Set if IMU is mounted upside down')
     parser.add_argument('--calibrate', action='store_true', default=False,
                        help='Run calibration routine')
+    parser.add_argument('--use-mag', action='store_true', default=False,
+                       help='BNO08x only: use magnetometer yaw (Rotation Vector) instead of Game Rotation Vector')
     args = parser.parse_args()
     
     print(f"Starting IMU server with {args.imu_type.upper()} IMU")
@@ -72,7 +76,8 @@ if __name__ == "__main__":
         imu_type=args.imu_type,
         pitch_bias=args.pitch_bias,
         upside_down=args.upside_down,
-        calibrate=args.calibrate
+    calibrate=args.calibrate,
+    use_mag=args.use_mag
     )
     try:
         while True:
