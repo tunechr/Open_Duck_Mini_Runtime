@@ -118,9 +118,26 @@ class RLWalk:
 
             # Create the appropriate controller
             try:
-                self.xbox_controller = ControllerFactory.create_controller(
-                    final_controller_type, self.command_freq
-                )
+                # For virtual controller, pass config-driven settings
+                if final_controller_type in [
+                    "virtual",
+                    "simulation",
+                    "demo",
+                ]:
+                    self.xbox_controller = ControllerFactory.create_controller(
+                        final_controller_type,
+                        self.command_freq,
+                        look_around_interval=self.duck_config.vc_look_around_interval,
+                        movement_interval=self.duck_config.vc_movement_interval,
+                        enable_movement=self.duck_config.vc_enable_movement,
+                        enable_head_movement=self.duck_config.vc_enable_head_movement,
+                        simulate_buttons=self.duck_config.vc_simulate_buttons,
+                        simulate_triggers=self.duck_config.vc_simulate_triggers,
+                    )
+                else:
+                    self.xbox_controller = ControllerFactory.create_controller(
+                        final_controller_type, self.command_freq
+                    )
                 print(f"Successfully initialized {final_controller_type} controller")
             except Exception as e:
                 print(f"Failed to initialize {final_controller_type} controller: {e}")
@@ -369,6 +386,7 @@ class RLWalk:
 
         if self.save_obs:
             pickle.dump(self.saved_obs, open("robot_saved_obs.pkl", "wb"))
+
         print("TURNING OFF")
 
 
@@ -414,7 +432,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--controller-type",
         type=str,
-        choices=["xbox", "ps5", "playstation5", "dualsense", "auto"],
+        choices=[
+            "xbox",
+            "ps5",
+            "playstation5",
+            "dualsense",
+            "keyboard",
+            "virtual",
+            "auto",
+        ],
         default=None,
         help="Controller type to use. 'auto' for auto-detection, or specify 'xbox'/'ps5'",
     )

@@ -1,6 +1,7 @@
 from mini_bdx_runtime.xbox_controller import XBoxController
 from mini_bdx_runtime.ps5_controller import PS5Controller
 from mini_bdx_runtime.virtual_controller import VirtualController
+from mini_bdx_runtime.keyboard_controller import KeyboardController
 
 
 class ControllerFactory:
@@ -14,6 +15,7 @@ class ControllerFactory:
         'virtual': VirtualController,
         'simulation': VirtualController,
         'demo': VirtualController,
+    'keyboard': KeyboardController,
     }
     
     @staticmethod

@@ -83,5 +83,19 @@ class DuckConfig:
         )
 
         # Add controller configuration
-        self.controller_type = self.json_config.get("controller_type", "xbox")  # Default to xbox
-        self.auto_detect_controller = self.json_config.get("auto_detect_controller", True)  # Auto-detect by default
+        # Default to xbox if not provided
+        self.controller_type = self.json_config.get("controller_type", "xbox")
+        # Auto-detect by default; if true, we'll try to detect a physical controller
+        self.auto_detect_controller = self.json_config.get(
+            "auto_detect_controller", True
+        )
+
+        # Virtual controller settings (optional)
+        vcs = self.json_config.get("virtual_controller_settings", {})
+        self.vc_look_around_interval = vcs.get("look_around_interval", 10.0)
+        self.vc_movement_interval = vcs.get("movement_interval", 30.0)
+        self.vc_enable_movement = vcs.get("enable_movement", False)
+        # Optional new flags to keep idle by default
+        self.vc_enable_head_movement = vcs.get("enable_head_movement", False)
+        self.vc_simulate_buttons = vcs.get("simulate_buttons", False)
+        self.vc_simulate_triggers = vcs.get("simulate_triggers", False)
