@@ -426,8 +426,8 @@ class ImuBNO08x:
 
         # Lazy import to avoid hard dependency for users not using BNO08x
         try:
+            from adafruit_bno08x.i2c import BNO08X_I2C
             from adafruit_bno08x import (
-                BNO08X_I2C,
                 BNO_REPORT_GAME_ROTATION_VECTOR,
                 BNO_REPORT_ROTATION_VECTOR,
             )

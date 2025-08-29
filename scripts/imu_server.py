@@ -6,7 +6,7 @@ import os
 
 # Add the parent directory to the path to import mini_bdx_runtime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from mini_bdx_runtime.imu import Imu, ImuICM20948, ImuBNO08x
+from .mini_bdx_runtime.imu import Imu, ImuICM20948, ImuBNO08x
 from threading import Thread
 import time
 
