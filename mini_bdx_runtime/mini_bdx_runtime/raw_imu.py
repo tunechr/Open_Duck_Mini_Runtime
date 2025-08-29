@@ -315,11 +315,105 @@ class Imu:
         return self.last_imu_data
 
 
+class ImuBNO08x:
+    """BNO08x/BNO085 raw sensor reader: returns gyro (rad/s) and accelero (m/s^2).
+    Enables accelerometer and gyroscope features on the device.
+    """
+    def __init__(self, sampling_freq, user_pitch_bias=0, calibrate=False, upside_down=True):
+        self.sampling_freq = sampling_freq
+        self.calibrate = calibrate
+        self.upside_down = upside_down
+        self.x_offset = 0.0
+
+        # Lazy import to avoid hard dependency when not used
+        try:
+            from adafruit_bno08x.i2c import BNO08X_I2C
+            from adafruit_bno08x import BNO_REPORT_ACCELEROMETER, BNO_REPORT_GYROSCOPE
+        except Exception as e:
+            raise RuntimeError(
+                "BNO08x driver not available. Install 'adafruit-circuitpython-bno08x' and 'adafruit-blinka'."
+            ) from e
+
+        i2c = busio.I2C(board.SCL, board.SDA)
+        self.imu = BNO08X_I2C(i2c)
+        # Enable raw sensors
+        self.imu.enable_feature(BNO_REPORT_ACCELEROMETER)
+        self.imu.enable_feature(BNO_REPORT_GYROSCOPE)
+
+        self.last_imu_data = {
+            "gyro": np.array([0.0, 0.0, 0.0]),
+            "accelero": np.array([0.0, 0.0, 0.0]),
+        }
+        self.imu_queue = Queue(maxsize=1)
+        Thread(target=self.imu_worker, daemon=True).start()
+
+    def _apply_axis_remap(self, gyro, accel):
+        # Mirror the mapping style used elsewhere for upside_down
+        if self.upside_down:
+            gyro_remapped = [-gyro[1], -gyro[0], -gyro[2]]
+            accel_remapped = [-accel[1], -accel[0], -accel[2]]
+        else:
+            gyro_remapped = [-gyro[1], gyro[0], gyro[2]]
+            accel_remapped = [-accel[1], accel[0], accel[2]]
+        return gyro_remapped, accel_remapped
+
+    def tare_x(self):
+        print("Taring x ...")
+        x_values = []
+        num_values = 100
+        ok = False
+        while not ok:
+            try:
+                accel = self.imu.acceleration
+                if accel is not None:
+                    x_values.append(accel[0])
+            except Exception:
+                continue
+            x_values = x_values[-num_values:]
+            if len(x_values) == num_values:
+                mean = np.mean(x_values)
+                std = np.std(x_values)
+                if std < 0.05:
+                    ok = True
+                    self.x_offset = mean
+                    print("Tare x done")
+                else:
+                    print(std)
+            time.sleep(0.01)
+
+    def imu_worker(self):
+        while True:
+            s = time.time()
+            try:
+                gyro_raw = self.imu.gyro         # rad/s
+                accel_raw = self.imu.acceleration # m/s^2
+                if gyro_raw is None or accel_raw is None:
+                    continue
+                gyro, accel = self._apply_axis_remap(gyro_raw, accel_raw)
+                accel[0] -= self.x_offset
+                data = {
+                    "gyro": np.array(gyro, dtype=float),
+                    "accelero": np.array(accel, dtype=float),
+                }
+            except Exception as e:
+                print("[BNO08x RAW]:", e)
+                continue
+            self.imu_queue.put(data)
+            took = time.time() - s
+            time.sleep(max(0, 1 / self.sampling_freq - took))
+
+    def get_data(self):
+        try:
+            self.last_imu_data = self.imu_queue.get(False)
+        except Exception:
+            pass
+        return self.last_imu_data
+
 if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='IMU Data Reader')
-    parser.add_argument('--imu-type', choices=['bno055', 'icm20948'], default='bno055',
+    parser.add_argument('--imu-type', choices=['bno055', 'icm20948', 'bno08x', 'bno085'], default='bno055',
                        help='Type of IMU to use (default: bno055)')
     parser.add_argument('--upside-down', action='store_true', default=False,
                        help='Set if IMU is mounted upside down')
@@ -332,6 +426,8 @@ if __name__ == "__main__":
     
     if args.imu_type == 'icm20948':
         imu = ImuICM20948(50, upside_down=args.upside_down, calibrate=args.calibrate)
+    elif args.imu_type in ('bno08x', 'bno085'):
+        imu = ImuBNO08x(50, upside_down=args.upside_down, calibrate=args.calibrate)
     else:
         imu = Imu(50, upside_down=args.upside_down, calibrate=args.calibrate)
     
