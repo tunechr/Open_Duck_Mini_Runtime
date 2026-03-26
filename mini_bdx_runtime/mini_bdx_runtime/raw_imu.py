@@ -336,6 +336,7 @@ class ImuBNO08x:
 
         i2c = busio.I2C(board.SCL, board.SDA)
         self.imu = BNO08X_I2C(i2c)
+        
         # Enable raw sensors
         self.imu.enable_feature(BNO_REPORT_ACCELEROMETER)
         self.imu.enable_feature(BNO_REPORT_GYROSCOPE)

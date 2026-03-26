@@ -82,6 +82,9 @@ trust <controller_mac_address>
 connect <controller_mac_address>
 ```
 
+10:18:49:98:41:14
+
+
 The led on the controller should stop blinking and stay on.
 
 You can test that it's working by running
@@ -180,3 +183,120 @@ Download the [latest policy checkpoint ](https://github.com/apirrone/Open_Duck_M
 - left and right triggers to control the left and right antennas
 - LB (new!) press and hold to increase the walking frequency, kind of a sprint mode 🙂
 ```
+
+## Troubleshooting I2C
+A useful way to check for I2C issues.
+Scanning for I2C devices using  i2cdetect.
+
+```
+sudo apt-get install i2c-tools
+i2cdetect -y 1
+```
+
+On modern Raspberry Pi OS releases, you do not need to run the command with sudo. The -y disables interactive mode, so it just goes ahead and scans. The 1 specifies the I2C bus.
+
+
+
+https://learn.adafruit.com/scanning-i2c-addresses/raspberry-pi
+
+## Camera Test
+Error : ModuleNotFoundError: No module named 'libcamera'
+
+reinstall: 
+
+sudo apt-get install --reinstall libcamera-apps
+```
+
+## Controllers (Xbox, PS5, Keyboard, Virtual)
+
+You can drive the robot using different controllers. Selection can be done via CLI or `duck_config.json`.
+
+- Supported types: `xbox`, `ps5` (aka `playstation5`/`dualsense`), `keyboard`, `virtual`, or `auto` (auto-detect; defaults to virtual if none).
+- Configure in JSON: set `controller_type` and optionally `auto_detect_controller`.
+- CLI override: `--controller-type <type>`.
+
+Keyboard Controller (when using `--controller-type keyboard`):
+
+- Movement: arrows (Up/Down = forward/back; Left/Right = lateral)
+- Yaw: `,` or `L` = left, `.` or `;` = right
+- Head: `H/L` yaw (-/+), `J/K` pitch (+/-), `U/O` roll (-/+)
+- Buttons: `A/S/D/F` map to Xbox `A/B/X/Y`
+- Bumpers: `Q/W` map to `LB/RB`
+- D-Pad: `Z/X` up/down
+- Triggers: Left/Right Shift as analog 1.0 while held
+
+Virtual Controller:
+- Safe idle by default (no movement/head/inputs)
+Optional behaviors via `virtual_controller_settings` in config:
+
+- `look_around_interval`, `movement_interval`
+- `enable_movement`, `enable_head_movement`, `simulate_buttons`, `simulate_triggers`
+
+## IMU: client/server and BNO08x/BNO085 support
+
+Run the IMU server on the robot:
+
+```bash
+python3 scripts/imu_server.py --imu-type <bno055|icm20948|bno08x|bno085> --upside-down --calibrate --use-mag
+```
+
+Notes:
+
+- `--use-mag` applies to BNO08x only (uses Rotation Vector with magnetometer; omit for Game Rotation Vector).
+- `--upside-down` flips axes for inverted mounting.
+- `--calibrate` triggers the device’s calibration flow.
+
+Connect from your computer with the IMU client:
+
+```bash
+python3 scripts/imu_client.py --ip <robot_ip> [--freq 30] [--console-only] [--force-qt] [--no-gui] [--raw-mode]
+```
+
+Viewer fallback order:
+
+1) FramesViewer (if installed) → 2) PyQtGraph 3D axes viewer → 3) Console (Euler + quaternion)
+
+## Config file (`duck_config.json`)
+
+Start from `example_config.json` and copy it to your home directory on the robot:
+
+```bash
+cp example_config.json ~/duck_config.json
+```
+
+Key fields:
+
+- `start_paused` (bool)
+- `imu_upside_down` (bool)
+- `phase_frequency_factor_offset` (float)
+- `expression_features` (eyes, projector, antennas, speaker, microphone, camera)
+- `joints_offsets` (per-joint offsets)
+- Controller selection:
+	- `controller_type`: `xbox` | `ps5` | `keyboard` | `virtual` | `auto`
+	- `auto_detect_controller`: true/false
+- Virtual controller tuning (optional):
+	- `virtual_controller_settings`: `{ "look_around_interval": 10.0, "movement_interval": 30.0, "enable_movement": false, "enable_head_movement": false, "simulate_buttons": false, "simulate_triggers": false }`
+
+## Run the walk with a controller
+
+Download the ONNX policy (see link above), then run:
+
+```bash
+cd scripts
+python3 v2_rl_walk_mujoco.py --onnx_model_path <path>/BEST_WALK_ONNX_2.onnx --controller-type auto
+```
+
+Examples:
+
+- Force keyboard: `--controller-type keyboard`
+- Force virtual (idle): `--controller-type virtual`
+- Force Xbox/PS5: `--controller-type xbox` or `--controller-type ps5`
+
+During run (Xbox mapping):
+
+- A: pause/unpause
+- X: projector toggle
+- B: play random sound
+- Y: head control toggle (experimental)
+- LB (hold): sprint (increase walking frequency)
+- Left/Right triggers: control antennas (if installed)

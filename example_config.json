@@ -31,6 +31,9 @@
     "virtual_controller_settings": {
         "look_around_interval": 10.0,
         "movement_interval": 30.0,
-        "enable_movement": false
+    "enable_movement": false,
+    "enable_head_movement": false,
+    "simulate_buttons": false,
+    "simulate_triggers": false
     }
 }
